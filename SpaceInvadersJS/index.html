@@ -1,0 +1,2466 @@
+<!DOCTYPE html PUBLIC 
+          "-//W3C//DTD XHTML 1.0 Strict//EN"
+          "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+
+<!--
+    Webdev Javascript Assignment :: Game :: Space Invaders
+    by Lee Coakley
+    March 2012
+-->
+
+
+
+<html lang="en-uk" xmlns="http://www.w3.org/1999/xhtml">
+    
+<head>
+    <title>Space Invaders</title>
+    <link rel="stylesheet" href="style.css"           type="text/css"  />
+    <link rel="icon"       href="images/ico16x16.png" type="image/png" />
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    
+    <script type="text/javascript">
+    //<![CDATA[ // Necessary for validation, stops interpretation of code as XHTML
+    
+        // === SPACE INVADERS ===
+        // Based on the original 1978 game by Tomohiro Nishikado.
+        
+        
+        
+        // ====================================================================
+        // Game state data
+        // ====================================================================
+        
+        // Debugging
+        var debug = false; // Show debug information below the game.  Slows it down a lot though.
+        
+        // Drawing region
+        var vw              = 512;                      // View width
+        var vh              = 640;                      // View height
+        var targetFrameRate = 60;                       // Frames per second in hertz.
+        var targetFrequency = 1000.0 / targetFrameRate; // Frame frequency in milliseconds.
+        var frameCtr        = 0;                        // Elapsed frames since game start.
+        var mainLoopIntId   = undefined;                // ID from setInterval function call in coreInit(). 
+        
+        // Collision system
+        var collisionCtr           = 0;
+        var spatialHashArray       = new Array(); // 2D spatial partition collision structure.
+        var spatialHashGranularity = 16;          // Granularity in pixels.  Should be near average entity dimensions.
+        
+        // Entity core 
+        var coreEntityArray        = new Array(); // Array of references to entities to be processed in the current step.
+        var coreEntityStackCreate  = new Array(); // Entities to add to core entity array at end of step.
+        var coreEntityStackDestroy = new Array(); // Entities to destroy at end of step.
+        var coreEntityUidCtr       = 0;           // Unique identifier for entities.
+        
+        // Entity limits
+        var coreEntityMaxPlayer     = 2;
+        var coreEntityMaxPlayerShot = 2;
+        var coreEntityMaxEnemy      = 56;
+        var coreEntityMaxEnemyShot  = 16;
+        var coreEntityMaxFortress   = 160;
+        var coreEntityMaxGround     = 64;
+        var coreEntityMaxEffect     = 64;
+        
+        // Entity types
+        var typePlayer     = 0;
+        var typePlayerShot = 1;
+        var typeEnemy      = 2;
+        var typeEnemyShot  = 3;
+        var typeFortress   = 4;
+        var typeGround     = 5;
+        var typeFx         = 6;
+        
+        // Entity subtypes
+        var subtypeEnemyJelly          = 0;
+        var subtypeEnemyCrab           = 1;
+        var subtypeEnemyOcto           = 2;
+        var subtypeEnemyUfo            = 3;
+        var subtypeEnemyShotNormal     = 4;
+        var subtypeEnemyShotPenetrator = 5;
+        var subtypeFortressN           = 6;
+        var subtypeFortressTl          = 7;
+        var subtypeFortressTr          = 8;
+        var subtypeFortressBl          = 9;
+        var subtypeFortressBr          = 10;
+        
+        // Keyboard state
+        var keyState      = new Array(256); // Key states for the current frame.
+        var keyStateDelta = new Array(256); // Whether key state has changed since last frame.
+        var keyStateEv    = new Array(256); // Instantaneous keyboard state, set by event handlers.
+        
+        // Key scancodes
+        var scancodeArrowLeft  = 37;
+        var scancodeArrowRight = 39;
+        var scancodeZ          = 90;
+        var scancodeP          = 80;
+        var scancodeC          = 67;
+        var scancodeS          = 83;
+        
+        // Control bindings
+        var bindMoveLeft  = scancodeArrowLeft;
+        var bindMoveRight = scancodeArrowRight;
+        var bindFire      = scancodeZ;
+        var bindPause     = scancodeP;
+        var bindCoin      = scancodeC;
+        var bindStart     = scancodeS;
+        
+        // Control states
+        var ctrlMoveLeft  = false;
+        var ctrlMoveRight = false;
+        var ctrlAxisX     = 0;
+        var ctrlFire      = false;
+        var ctrlPause     = false;
+        var ctrlCoin      = false;
+        var ctrlStart     = false;
+        
+        // User interface
+        var uiLifeOffset   = new vec2( 8, 618 );
+        var uiCreditOffset = new vec2( 8, 618 );
+        
+        // Gameplay constants.  Too bad there's no compatible 'const' keyword. (No IE support - what a surprise).
+        var gameConstTopOffset          = new vec2( 0, 64 );
+        var gameConstPlayerOffset       = new vec2( 56+32, vh-64 ); // Underneath first fortress
+        var gameConstPlayerLives        = 5;  
+        var gameConstPlayerRespawnDelay = 75;
+        var gameConstPlayerMoveSpeed    = 4; // Movement speed in pixels per frame.
+        var gameConstPlayerShotMax      = 1; // The original game only allowed one.
+        var gameConstPlayerShotSpeed    = 12;
+        var gameConstPlayerSafeTime     = 120; // Invincibility time when spawning
+        var gameConstEnemyOffset        = new vec2( 56, 208 );
+        var gameConstEnemySpacing       = new vec2( 32, 32 );
+        var gameConstEnemyLimitLeft     = 4;
+        var gameConstEnemyLimitRight    = vw - gameConstEnemyLimitLeft;
+        var gameConstEnemyWaveSize      = 55;
+        var gameConstEnemyRowSize       = 11;
+        var gameConstEnemyDescendDist   = gameConstEnemySpacing.y / 2;
+        var gameConstEnemySpeedMin      = 0.25;
+        var gameConstEnemySpeedMax      = 8;
+        var gameConstEnemyUfoSpeed      = 2;
+        var gameConstEnemyUfoMinTime    = 300; // At least five seconds between UFOs
+        var gameConstEnemyShotSpeed     = 7;
+        var gameConstEnemyShotMax       = 4;
+        var gameConstEnemyScoreJelly    = 30;
+        var gameConstEnemyScoreCrab     = 20;
+        var gameConstEnemyScoreOcto     = 10;
+        var gameConstExtraLifeThresh    = 1500; // You get an extra life when your score increments over a multiple of this.
+        var gameConstFortressOffset     = new vec2( 56, 480 );
+        var gameConstFortressSpacing    = 112;
+        var gameConstGroundOffset       = new vec2( 0, 608 );
+        var gameConstGroundSpacing      = 32;
+        
+        // Game state
+        var gameStateVisibleOnCreate   = true;
+        var gameStateStep              = 0; // Global step counter
+        var gameStateDoStepEvents      = false;
+        var gameStateLogicTitle        = 0;
+        var gameStateLogicInsertCoin   = 1;
+        var gameStateLogicPressStart   = 2;
+        var gameStateLogicPreGame      = 3;
+        var gameStateLogicInGame       = 4;
+        var gameStateLogicGameOver     = 5;
+        var gameStateLogicWait         = 6;
+        var gameStateLogic             = gameStateLogicInsertCoin;
+        var gameStateLogicMeta         = 0;
+        var gameStateLogicWaitTime     = 30;
+        var gameStateLogicNext         = undefined;
+        var gameStateAttractMode       = false; // Arcade games play themselves.  Didn't have time to program this.
+        var gameStateAttractTime       = 0;     // Time attract mode has been running.
+        var gameStateAttractTimeMax    = 600;   // 
+        var gameStatePaused            = false;
+        var gameStateCredits           = 0;
+        var gameStateScore             = 0;
+        var gameStateScoreHigh         = 0;
+        var gameStatePlayerEnt         = undefined;
+        var gameStatePlayerLives       = gameConstPlayerLives;
+        var gameStatePlayerShotCount   = 0;
+        var gameStatePlayerRespawnCtr  = 0;
+        var gameStateEnemyStateNormal  = 0;
+        var gameStateEnemyStateDescend = 1;
+        var gameStateEnemyState        = gameStateEnemyStateNormal;
+        var gameStateEnemyStateMeta    = 0; // State of current state
+        var gameStateEnemyWave         = 0; // As in the original, with each passing wave the enemies start off one row closer.
+        var gameStateEnemyCount        = 0;
+        var gameStateEnemySpeed        = gameConstEnemySpeedMin;
+        var gameStateEnemyShotCount    = 0;
+        var gameStateEnemyUfoEnt       = undefined;
+        var gameStateEnemyUfoTimer     = 0;
+        
+        // Images (sequences are arrays)
+        var imageDebugPixel          = imageLoad( "debugPixel.png", 1,1 );
+        var imageTest                = imageLoad( "test8x8.png", 8,8 );
+        var imagePlayer              = imageLoad( "player.png",     64,40 );
+        var imagePlayerShot          = imageLoad( "playerShot.png", 8, 32 );
+        var imageEnemyJelly          = imageLoadSequence( "enemyJelly", 2, ".png", 20,20 );
+        var imageEnemyCrab           = imageLoadSequence( "enemyCrab",  2, ".png", 26,20 );
+        var imageEnemyOcto           = imageLoadSequence( "enemyOcto",  2, ".png", 28,20 );
+        var imageEnemyUfo            = imageLoadSequence( "enemyUfo",   1, ".png", 36,18 ); // Might animate this later
+        var imageEnemyShotNormal     = imageLoad( "enemyShotNormal.png",     10,20 );
+        var imageEnemyShotPenetrator = imageLoad( "enemyShotPenetrator.png", 12,20 );
+        var imageFxPlayerMuzzleFlash = imageLoadSequence( "fxPlayerMuzzleFlash", 2, ".png", 76,64 );
+        var imageFxPlayerShotHit     = imageLoadSequence( "fxPlayerShotHit",     2, ".png", 52,52 );
+        var imageFxEnemyShotHit      = imageLoadSequence( "fxEnemyShotHit",      2, ".png", 52,52 );
+        var imageFxExplosion         = imageLoad( "fxExplosion.png", 70,70 );
+        var imageFortressBlockN      = imageLoadSequence( "fortressBlockN",  4, ".png", 8,8 );
+        var imageFortressBlockTl     = imageLoadSequence( "fortressBlockTl", 4, ".png", 8,8 );
+        var imageFortressBlockTr     = imageLoadSequence( "fortressBlockTr", 4, ".png", 8,8 );
+        var imageFortressBlockBl     = imageLoadSequence( "fortressBlockBl", 4, ".png", 8,8 );
+        var imageFortressBlockBr     = imageLoadSequence( "fortressBlockBr", 4, ".png", 8,8 );
+        var imageFortressOutline     = imageLoad( "fortressOutline.png", 68,52 );
+        var imageGround              = imageLoadSequence( "ground", 4, ".png", 32,4 );
+        var imageGroundOutline       = imageLoad( "groundOutline.png", 512,8 );
+        
+        
+        
+        
+        
+        
+        
+        // ====================================================================
+        // General purpose functions
+        // ====================================================================
+        
+        // Show a warning message if the expression is not true.
+        // Pauses as well since it's very annoying to get alert()'d
+        // repeatedly every main loop iteration.
+        function assert( expression, message ) {
+            if ( ! expression) {
+                alert( "Assertion failed!\n\n" + message );
+                gameStatePaused = true;
+            }
+        }
+        
+        
+        
+        // Terminate game execution upon completion of the current main loop iteration.
+        // Unfortunately there's no actual "instantaneously abort execution" function
+        // like most other languages have.
+        function abort() {
+            clearInterval( mainLoopIntId );
+        }
+        
+        
+        
+        // Return smaller of two numbers.
+        function min( a, b ) {
+            return (a<b) ? a : b;
+        }
+        
+        
+        
+        // Return larger of two numbers.
+        function max( a, b ) {
+            return (a>b) ? a : b;
+        }
+        
+        
+        
+        // Constrain v to inclusive range.
+        function clamp( v, vmin, vmax ) {
+            return max( vmin, min(v,vmax) );
+        }
+        
+        
+        
+        // Test whether given inclusive range is inclusive of v.
+        function inRange( v, vmin, vmax ) {
+            return (v == clamp(v,vmin,vmax));
+        }
+        
+        
+        
+        // Linear interpolation between a and b by fraction x.
+        function lerp( a, b, x ) {
+            return a + ((b-a) * x);
+        }
+        
+        
+        
+        // Using linear interpolation, access numeric array by fraction.
+        // Ex: lerpArray( [0,5], 0.5 ) == 2.5
+        function lerpArray( array, x ) {
+            var index = x * (array.length - 1);
+            var low   = Math.floor( index );
+            var high  = Math.ceil ( index );
+            var frac  = index - low;
+            
+            return lerp( low, high, frac );
+        }
+        
+        
+        
+        // Random floating point number in range: (a:b].
+        function randRange( a, b ) {
+            return lerp( a, b, Math.random() );
+        }
+        
+        
+        
+        // Random in zero-relative range: (-x:x].
+        function randRel( x ) {
+            return lerp( -x, x, Math.random() );
+        }
+        
+        
+        
+        // Returns true once out of every N calls on average, uniformly distributed.
+        function randChance( n ) {
+            return (0 == Math.floor(Math.random() * n))
+        }
+        
+        
+        
+        // Generate array of integers in range (a:b] in random order.
+        // Values are guaranteed to be unique.
+        function randUniqueIntArray( a, b ) {
+            var array = genRange( a, b, 1 );
+            shuffleArray( array );
+            return array;
+        }
+        
+        
+        
+        // Generate linear sequence of numbers and give them back in an array.
+        // Range is (a:b].
+        function genRange( a, b, step ) {
+            var array = new Array();
+            
+            // Generate array
+            for (var i=a; i<b; i+=step)
+                array.push( i );
+            
+            return array;
+        }
+        
+        
+        
+        // Randomly reorder array elements.
+        function shuffleArray( array ) {
+            for (var i=0; i<array.length; i++) {
+                var r = Math.floor( Math.random() * array.length );
+                
+                var swap = array[i];
+                array[i] = array[r];
+                array[r] = swap;
+            }
+        }
+        
+        
+        
+        // Snap to x to next lowest multiple.
+        function snapLow( x, mult ) {
+            return Math.floor( x / mult ) * mult;
+        }
+        
+        
+        
+        // Snap to x to nearest multiple.
+        function snapNear( x, mult ) {
+            return Math.round( x / mult ) * mult;
+        }
+        
+        
+        
+        // Snap to x to next highest multiple.
+        function snapHigh( x, mult ) {
+            return Math.ceil( x / mult ) * mult;
+        }
+        
+        
+        
+        // Search unsorted array.
+        // Return index of goal in array, or -1 if not found.
+        function linearSearch( array, goal ) {
+            for (var i=0; i<array.length; i++)
+                if (array[i] == goal)
+                    return i;
+            
+            return -1;
+        }
+        
+        
+        
+        // Struct: 2D vector.
+        function vec2( x, y ) {
+            this.x = x;
+            this.y = y;
+        }
+        
+        
+        
+        // Struct: Axis-aligned bounding box.
+        function aabb( tl, br ) {
+            this.tl = tl; // Top left
+            this.br = br; // Bottom right
+        }
+        
+        
+        
+        // Test whether bboxes overlap.
+        function aabbCollide( a, b ) {
+            return (!( a.tl.x > b.br.x
+                    || a.br.x < b.tl.x
+                    || a.tl.y > b.br.y
+                    || a.br.y < b.tl.y ));
+        }
+        
+        
+        
+        // Get centre of overlap region of two bounding boxes.
+        // If not overlapping, the result will be the centre of the line between the closest points.
+        // Returns vec2.
+        function aabbOverlapCentre( a, b ) {
+            var xmin,xmax,ymin,ymax, xpos,ypos;
+            xmax = max( a.tl.x, b.tl.x ); // Max of left
+            xmin = min( a.br.x, b.br.x ); // Min of right
+            ymax = max( a.tl.y, b.tl.y ); // Max of top
+            ymin = min( a.br.y, b.br.y ); // Min of bottom
+            
+            xpos = lerp( xmin, xmax, 0.5 );
+            ypos = lerp( ymin, ymax, 0.5 );
+            
+            return new vec2( xpos,ypos );
+        }
+        
+        
+        
+        // Load an image from "images/" directory.
+        function imageLoad( filename, width, height ) {
+            var img = new Image();
+                img.src    = "images/" + filename;
+                img.width  = width;
+                img.height = height;
+                img.alt    = filename;
+            
+            return img;
+        }
+        
+        
+        
+        // Load a sequence of images numbered in range [0:(count-1)].
+        // Must all be same size.
+        function imageLoadSequence( filenameStart, count, fileExt, width, height ) {
+            var imageArray = new Array();
+        
+            for (var i=0; i<count; i++) {
+                var filename = filenameStart + i + fileExt;
+                var image    = imageLoad( filename, width, height );
+                imageArray.push( image );
+            }
+            
+            return imageArray;
+        }
+       
+        
+        
+        
+        
+        
+        
+        // ====================================================================
+        // Game entity core logic
+        // ====================================================================
+        
+        // Struct: Game entity.
+        function entity( pos, size, image, centre, elem ) {
+            // Main data
+            this.pos    = pos;      // Absolute position in game view.
+            this.size   = size;     // Entity dimensions, unrelated to image size.
+            this.image  = image;    // Image to use when drawing.
+            this.centre = centre;   // Centre coords of image and bounding box.
+            this.elem   = elem;     // Linked HTML element.
+            
+            // Meta data
+            this.uid       = ++coreEntityUidCtr;     // Unique identifier.
+            this.coreIndex = undefined; // Index in core entity array.
+            this.type      = undefined; // What type of thing are you?
+            this.subtype   = undefined; // What kind of that type are you?
+            this.name      = "noname";  // What are you called?
+            this.exists    = true;      // Whether entity is considered for game logic.
+            this.visible   = gameStateVisibleOnCreate; // Whether entity can be seen.
+            
+            // Collision subsystem
+            this.bbox               = undefined;   // Bounding box: set on create, updated by game logic.
+            this.spatialHashIndeces = new Array(); // SH buckets the entity occupies
+            
+            // Behaviour
+            this.died     = false     // Whether entity died from being hit (true), or was simply culled by game logic (false).
+            this.step     =  0;       // Step counter for this entity.  How long it's existed.
+            this.lifetime = -1;       // Entity is automatically destroyed after this many steps.  -1 = never.
+            this.hp       =  1;       // How many hits entity can survive before being automatically destroyed.
+            
+            // Collision
+            this.collideEnable = true;  // Whether entity is included in collision detection.
+            this.collideStatic = false; // Whether entity is stationary.  No need to regenerate AABB for static entities.
+            
+            // Events
+            this.evDestroy = undefined; // Function to call upon destruction.  Parameters: [this]
+            this.evCollide = undefined; // Function to call on collision.      Parameters: [this, other]
+            this.evStep    = undefined; // Function to call each step.         Parameters: [this]
+            
+            
+            entitySetVisible( this, this.visible );
+            
+            // In Javascript you can add members dynamically at runtime.
+            // An entity isn't limited to this set of variables.
+        }
+        
+        
+        
+        // Create entity with default characteristics.
+        // An XHTML <img> element is created and assigned to it automatically.
+        // Addition of the XHTML element to the DOM and of the entity to the
+        // core entity array are deferred until the next game logic iteration
+        // because it simplifies the creation/step logic.
+        function entityCreate() {
+            var img       = document.createElement("img"); // Same as "new Image()" as far as I can tell.
+            var ent       = new entity( new vec2(0,0), new vec2(8,8), img, new vec2(0,0), img );
+            img.className = "gameObj";
+            
+            coreEntityStackCreate.push( ent );
+            
+            return ent;
+        }
+        
+        
+        
+        // Destroy entity.
+        // Removal from coreEntity array is deferred and is handled by
+        // gameEntityDestroy().  This greatly simplifies core game logic
+        // functions which need to loop through the array all the time.
+        function entityDestroy( ent ) {
+            if (ent.exists) {
+                if (ent.evDestroy != undefined)
+                    ent.evDestroy( ent );
+                
+                ent.exists = false;
+                coreEntityStackDestroy.push( ent.coreIndex );
+            }
+        }
+        
+        
+        
+        // Destroy all entities.
+        function entityDestroyAll() {
+            for (var i=0; i<coreEntityArray.length; i++)
+                entityDestroy( coreEntityArray[i] );
+        }
+        
+        
+        
+        // Whether entities will be created visible, or hidden until manually made visible.
+        function entitySetVisibleOnCreate( state ) {
+            gameStateVisibleOnCreate = state;
+        }
+        
+        
+        
+        // Set entity image stuff.
+        // Pretty slow.  Coincidentally, the original game had a similar
+        // limitation which meant graphical updates had to be staggered.
+        // Maybe I'll do the same.
+        function entitySetImage( ent, image ) {
+            ent.image.src    = image.src;
+            ent.image.width  = image.width;
+            ent.image.height = image.height;
+            //ent.image.alt    = image.alt; // Probably doesn't matter...
+        }
+        
+        
+        
+        // Set entity image based on imageArray and imageIndex.
+        function entitySetImageAuto( ent ) {
+            var ind = min( ent.imageIndex, ent.imageArray.length-1 );
+            entitySetImage( ent, ent.imageArray[ind] );
+        }
+        
+        
+        
+        // Set visibility, both in logic and in the DOM.
+        function entitySetVisible( ent, state ) {
+            ent.visible               = state;
+            ent.elem.style.visibility = (state)  ?  "visible"  :  "hidden";
+        }
+        
+        
+        
+        // Set visibility for all entities.
+        function entitySetVisibleAll( state ) {
+            for (var i=0; i<coreEntityArray.length; i++)
+                entitySetVisible( coreEntityArray[i], state );
+        }
+        
+        
+        
+        // Set centre to the centre of the entity's associated image.
+        function entitySetCentreFromImage( ent ) {
+            ent.centre.x = Math.floor( ent.image.width  / 2 );
+            ent.centre.y = Math.floor( ent.image.height / 2 );
+        }
+        
+        
+        
+        // Set centre to the centre of the entity's size.
+        function entitySetCentreFromSize( ent ) {
+            ent.centre.x = Math.floor( ent.size.x / 2 );
+            ent.centre.y = Math.floor( ent.size.y / 2 );
+        }
+        
+        
+        
+        // Create and assign a new bounding box for the entity with correct settings.
+        function entityGenAabb( ent ) {
+            var x1 = ent.pos.x - ent.centre.x / 2;
+            var y1 = ent.pos.y - ent.centre.y / 2;
+            var x2 = x1        + ent.size.x;
+            var y2 = y1        + ent.size.y;
+        
+            var tl = new vec2( x1, y1 );
+            var br = new vec2( x2, y2 );
+            
+            ent.bbox = new aabb( tl, br );
+        }
+        
+        
+        
+        // Set existing bounding box to correct values.
+        // According to Firebug's profiler, this is much faster than creating new ones all the time.
+        function entitySetAabbAuto( ent ) {
+            ent.bbox.tl.x = ent.pos.x     - ent.centre.x / 2;
+            ent.bbox.tl.y = ent.pos.y     - ent.centre.y / 2;
+            ent.bbox.br.x = ent.bbox.tl.x + ent.size.x;
+            ent.bbox.br.y = ent.bbox.tl.y + ent.size.y;
+        }
+        
+        
+        
+        // From the given array of entities, create array of references to
+        // entities which lie within the given axis-aligned bounding box.
+        function entityGetEntitiesWithinAabb( array, bbox ) {
+            var entArray = new Array();
+            
+            for (var i=0; i<array.length; i++) {
+                ent = array[i];
+                
+                if (aabbCollide( ent.bbox, bbox ))
+                    entArray.push( ent );
+            }
+            
+            return entArray;
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Player logic 
+        // ===========================
+        
+        function playerEntityCreate() {
+            var ent = entityCreate();
+                ent.type     = typePlayer;
+                ent.name     = "Player";
+                ent.pos.x    = gameConstPlayerOffset.x;
+                ent.pos.y    = gameConstPlayerOffset.y;
+                ent.size.x   = 32; // Only the central part of the ship counts for collisions.
+                ent.size.y   = 22; // 
+                
+                ent.invincible      = true;
+                ent.invincibleTimer = gameConstPlayerSafeTime;
+                
+                ent.evDestroy = playerEvDestroy;
+                ent.evCollide = playerEvCollide;
+                ent.evStep    = playerEvStep;
+                
+                entityGenAabb ( ent );
+                entitySetImage( ent, imagePlayer );
+                entitySetCentreFromImage( ent );
+                
+                // Game state
+                gameStatePlayerEnt = ent;
+                
+            return ent;
+        }
+        
+        
+        
+        function playerEvDestroy( ent ) {
+            // State
+            gameStatePlayerEnt = undefined;
+        
+            if (ent.died) {
+                // Explode good and big
+                for (var i=0; i<32; i++) {
+                    var offs = Math.floor( randRange(-2,16) );
+                    var pos  = new vec2( ent.pos.x + randRel(48), 
+                                         ent.pos.y + randRel(32) );
+                    
+                    var ex = fxExplosionEntityCreate( pos );
+                        ex.lifetime        += offs; 
+                        ex.visibilityDelay += offs;
+                }
+            
+                
+                // State
+                gameStatePlayerLives--;
+                
+                
+                // UI
+                gameUpdateUi();
+                
+                
+                // Respawn, or gameover
+                if (gameStatePlayerLives >= 1)
+                    gameStatePlayerRespawnCtr = gameConstPlayerRespawnDelay;
+                else
+                    gameOver();
+            }
+        }
+        
+        
+        
+        function playerEvCollide( ent, other ) {
+            if (!ent.invincible)
+            if (other.type == typeEnemy
+            ||  other.type == typeEnemyShot) {
+                // Sleep
+                gameSetLogicStateWait( gameStateLogic, 15 );
+            
+                // Died horribly
+                ent.died = true;
+                entityDestroy( ent );
+            }
+        }
+        
+        
+        
+        function playerEvStep( ent ) {
+            // Invincibility
+            if (ent.invincible) {
+                if (--ent.invincibleTimer == 0) {
+                    ent.invincible = false;
+                    entitySetVisible( ent, true );
+                }
+                else if ((ent.step % 2 == 0)) { // Every second step
+                    entitySetVisible( ent, !ent.visible );
+                }
+            }
+        
+            // Move
+            var hw     = ent.image.width / 2;
+            ent.pos.x += ctrlAxisX * gameConstPlayerMoveSpeed;
+            ent.pos.x  = clamp( ent.pos.x, hw, vw-hw );
+            
+            // Fire
+            if (ctrlFire)
+            if (gameStatePlayerShotCount < gameConstPlayerShotMax) {
+                var pos = new vec2( ent.pos.x, ent.pos.y - 12 );
+                playerShotEntityCreate( pos );
+                fxPlayerMuzzleFlashEntityCreate( pos );
+            }
+        }
+        
+        
+        
+        // Runs every step independly of entity system.
+        function playerLogic() {
+            if (gameStatePlayerEnt == undefined)
+            if (gameStatePlayerRespawnCtr-- == 0)
+                 playerEntityCreate();
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Player shot logic
+        // ===========================
+        
+        function playerShotEntityCreate( pos ) {
+            var ent = entityCreate();
+                ent.name     = "PlayerShot";
+                ent.type     = typePlayerShot;
+                ent.pos.x    = pos.x;
+                ent.pos.y    = pos.y;
+                ent.size.x   = 4;
+                ent.size.y   = 32;
+                ent.centre.x = 4;
+                ent.centre.y = 28;
+            
+                ent.evDestroy = playerShotEvDestroy;
+                ent.evCollide = playerShotEvCollide;
+                ent.evStep    = playerShotEvStep;
+            
+                entityGenAabb ( ent );
+                entitySetImage( ent, imagePlayerShot );
+                
+                // Game state
+                gameStatePlayerShotCount++;
+            
+            return ent;
+        }
+        
+        
+        
+        function playerShotEvDestroy( ent ) {
+            gameStatePlayerShotCount--;
+        }
+        
+        
+        
+        function playerShotEvCollide( ent, other ) {
+            if (other.type == typeFortress
+            ||  other.type == typeEnemy
+            ||  other.type == typeEnemyShot) { // You can shoot down enemy shots in the original game.  Pretty neat.
+                var pos = aabbOverlapCentre( ent.bbox, other.bbox );
+                fxPlayerShotHitEntityCreate( pos );
+                entityDestroy( ent );
+            }
+        }
+        
+        
+        
+        function playerShotEvStep( ent ) {
+            // Move upward, die when at the top of the game area.
+            
+            ent.pos.y      -= gameConstPlayerShotSpeed;
+            var yLimit      = gameConstPlayerShotSpeed + ent.size.y + gameConstTopOffset.y;
+            var fadeThresh  = 72;
+            
+            if (ent.bbox.tl.y <= yLimit) { // Destroy when outside game area.
+                entityDestroy( ent );
+            }
+            else if (ent.bbox.tl.y < yLimit + fadeThresh) {
+                // Gradually slow down and shrink out of sight instead of suddenly disappearing.
+                var delta         = Math.floor( (fadeThresh/2) / gameConstPlayerShotSpeed );
+                ent.image.height -= delta;
+                ent.pos.y        += delta;
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Player muzzle flash effect logic 
+        // ===========================
+        
+        function fxPlayerMuzzleFlashEntityCreate( pos ) {
+            var ent = entityCreate();
+                ent.type          = typeFx;
+                ent.name          = "MuzzleFlash";
+                ent.pos.x         = pos.x;
+                ent.pos.y         = pos.y;
+                ent.centre.x      = 38;
+                ent.centre.y      = 56;
+                ent.lifetime      = 4;
+                ent.collideEnable = false;
+                ent.imageArray    = imageFxPlayerMuzzleFlash;
+                ent.imageIndex    = Math.floor( randRange(0,ent.imageArray.length) );
+                
+                ent.evStep = fxPlayerMuzzleFlashEvStep;
+                
+                entityGenAabb( ent );
+                entitySetImageAuto( ent );
+                
+                ent.centre.x += randRel( 2 );
+                ent.centre.y += randRel( 4 );
+        }
+        
+        
+        
+        function fxPlayerMuzzleFlashEvStep( ent ) {
+            // Move up and shrink along both axes, while retaining centre and absolute y-axis position.
+            var delta         = 2;
+            ent.pos.y        -= delta + 1;
+            ent.image.height -= delta;
+            ent.image.width  -= delta * 2;
+            ent.pos.x        += delta;
+            ent.pos.y        += delta / 2;
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Player shot hit effect logic 
+        // ===========================
+        
+        function fxPlayerShotHitEntityCreate( pos ) {
+            var ent = entityCreate();
+                ent.type          = typeFx;
+                ent.name          = "PlayerShotHit";
+                ent.pos.x         = pos.x;
+                ent.pos.y         = pos.y;
+                ent.lifetime      = 4;
+                ent.collideEnable = false;
+                ent.imageArray    = imageFxPlayerShotHit;
+                ent.imageIndex    = 0;
+                
+                ent.evStep = fxPlayerShotHitEvStep;
+                
+                entityGenAabb( ent );
+                entitySetImageAuto( ent );
+                entitySetCentreFromImage( ent );
+                
+                ent.centre.x += randRel( 4 );
+                ent.centre.y += randRel( 4 );
+            
+            return ent;
+        }
+        
+        
+        
+        function fxPlayerShotHitEvStep( ent ) {
+            if (ent.step == 2) {
+                ent.imageIndex++;
+                entitySetImageAuto( ent );
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Explosion effect logic
+        // ===========================
+        
+        function fxExplosionEntityCreate( pos ) {
+            var ent = entityCreate();
+                ent.type            = typeFx;
+                ent.name            = "Explosion";
+                ent.pos.x           = pos.x;
+                ent.pos.y           = pos.y;
+                ent.lifetime        = 7;
+                ent.visibilityDelay = 3;
+                ent.collideEnable   = false;
+                
+                ent.evStep = fxExplosionEvStep;
+                
+                entityGenAabb( ent );
+                entitySetVisible( ent, false );
+                entitySetImage( ent, imageFxExplosion );
+                entitySetCentreFromImage( ent );
+                
+            return ent;
+        }
+        
+        
+        
+        function fxExplosionEvStep( ent ) {
+            if (ent.step >= ent.visibilityDelay)
+            if (ent.step == ent.visibilityDelay) {
+                entitySetVisible( ent, true );
+            } else {
+                var grow = ent.step;
+                ent.image.width  += grow;
+                ent.image.height += grow;
+                entitySetCentreFromImage( ent );
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Enemy logic
+        // ===========================
+        
+        function enemyEntityCreate( subtype, pos ) {
+            var ent = entityCreate();
+                ent.type    = typeEnemy;
+                ent.subtype = subtype;
+                ent.name    = "Enemy";
+                ent.pos.x   = pos.x;
+                ent.pos.y   = pos.y;
+                
+                
+                // Set size
+                switch (ent.subtype) {
+                    case subtypeEnemyJelly:   ent.size.x = 20; ent.size.y = 16;  break;
+                    case subtypeEnemyCrab:    ent.size.x = 26; ent.size.y = 16;  break;
+                    case subtypeEnemyOcto:    ent.size.x = 28; ent.size.y = 16;  break;
+                }
+                
+                ent.centre.x   = 0;
+                ent.centre.y   = 0;
+                ent.imageArray = undefined;
+                ent.imageIndex = 0;
+                ent.score      = undefined;
+                ent.direction  = undefined; // -1 == left, 1 == right
+                ent.sequence   = undefined;
+                
+                ent.evDestroy = enemyEvDestroy;
+                ent.evCollide = enemyEvCollide;
+                ent.evStep    = enemyEvStep;
+                
+                entityGenAabb( ent );
+                
+                
+                // Set image
+                switch (ent.subtype) {
+                    case subtypeEnemyJelly:   ent.imageArray = imageEnemyJelly;   break;
+                    case subtypeEnemyCrab:    ent.imageArray = imageEnemyCrab;    break;
+                    case subtypeEnemyOcto:    ent.imageArray = imageEnemyOcto;    break;
+                }
+                
+                
+                // Set score
+                switch (ent.subtype) {
+                    case subtypeEnemyJelly:   ent.score = gameConstEnemyScoreJelly;   break;
+                    case subtypeEnemyCrab:    ent.score = gameConstEnemyScoreCrab;    break;
+                    case subtypeEnemyOcto:    ent.score = gameConstEnemyScoreOcto;    break;
+                }
+                
+                
+                // Set initial movement multiplier
+                ent.direction = +1;
+                
+                
+                // Gamestate
+                gameStateEnemyCount++;
+                
+            return ent;
+        }
+        
+        
+        
+        function enemyEvDestroy( ent ) {
+            // State
+            gameStateEnemyCount--;
+        
+            if (ent.died) {
+                // Score
+                gameScore( ent.score );
+                
+                
+                // Blow up
+                var xpos = ent.pos.x + (ent.size.x / 2) + randRel( 2 );
+                var ypos = ent.pos.y + (ent.size.y / 2) + randRel( 2 );
+                var pos  = new vec2( xpos,ypos )
+                
+                fxExplosionEntityCreate( pos );
+                
+                if (gameStateEnemyCount == 0) {// If you were the last one...
+                    // Blow up real good!
+                    var size,ex;
+                    
+                    size = 64;
+                        ex = fxExplosionEntityCreate( pos );
+                        ex.image.width     += size;
+                        ex.image.height    += size;
+                        ex.centre.x        += size / 2;
+                        ex.centre.y        += size / 2;
+                        ex.lifetime         = 16;
+                        ex.visibilityDelay  = 8;
+                        
+                    size = 96;
+                        ex = fxExplosionEntityCreate( pos );
+                        ex.image.width     += size;
+                        ex.image.height    += size;
+                        ex.centre.x        += size / 2;
+                        ex.centre.y        += size / 2;
+                        ex.lifetime         = 8;
+                        ex.visibilityDelay  = 4;
+                }
+                
+                
+                // Increase others' speed
+                if (gameStateEnemyCount > 32) {
+                    gameStateEnemySpeed += 0.04;
+                }
+                else if (gameStateEnemyCount > 16) {
+                    gameStateEnemySpeed += 0.03;
+                }
+                else if (gameStateEnemyCount > 4) {
+                    gameStateEnemySpeed += 0.02;
+                }
+                else if (gameStateEnemyCount <= 4) {
+                    gameStateEnemySpeed = gameConstEnemySpeedMax / gameStateEnemyCount;
+                }
+            }
+        }
+        
+        
+        
+        function enemyEvCollide( ent, other ) {
+            if (other.type == typePlayerShot) {
+                ent.died = true;
+                entityDestroy( ent );
+            }
+            
+            if (other.type == typeGround)
+                gameOver(); // Invaders have touched down!
+        }
+        
+        
+        
+        function enemyEvStep( ent ) {
+            // Move
+            if (gameStateEnemyState == gameStateEnemyStateNormal) {
+                ent.pos.x += gameStateEnemySpeed * ent.direction;
+            }
+            else if (gameStateEnemyState == gameStateEnemyStateDescend) {                
+                ent.pos.y += gameStateEnemySpeed;
+            }
+            
+            
+            // Animate
+            var animInterval = max( 2, gameStateEnemyCount );
+            
+            if ((ent.sequence + ent.step) % animInterval == 0) {
+                ent.imageIndex = (ent.imageIndex == 0)  ?  1  :  0;
+                entitySetImageAuto( ent );
+            }
+            
+            
+            // Shoot
+            if (gameStateEnemyShotCount < gameConstEnemyShotMax) {
+                var chance = 16 + (( (gameStateEnemyCount/gameConstEnemyWaveSize) * 60 ) * 30);
+                
+                // When close to player on x axis, bias up probability of firing
+                if (gameStatePlayerEnt != undefined) // If player actually exists
+                if (gameStateEnemyCount > 16)        // Don't do it when it would be annoying / overly difficult
+                if (Math.abs(gameStatePlayerEnt.pos.x - ent.pos.x) < 32) // +- 32 pixels away
+                    chance /= 4;
+                
+                if (randChance(chance)) {
+                    // One out of every eight shots is a penetrator.
+                    var subtype = randChance( 8 )  ?  subtypeEnemyShotPenetrator  :  subtypeEnemyShotNormal;
+                    var xpos    = ent.pos.x + ent.size.x / 2;
+                    var ypos    = ent.pos.y + ent.size.y;
+                    var pos     = new vec2( xpos, ypos );
+                    
+                    enemyShotEntityCreate( subtype, pos );
+                }
+            }
+        }
+        
+        
+        
+        // Collective enemy logic.
+        // Runs once per step.
+        function enemyLogic() {
+            // Get min/max extent of enemy area.
+            var enemyArray = new Array();
+            var xmin       = +999999;
+            var xmax       = -999999;
+            
+            for (var i=0; i<coreEntityArray.length; i++) {
+                var ent = coreEntityArray[i];
+                
+                if (ent.exists)
+                if (ent.type    == typeEnemy)
+                if (ent.subtype != subtypeEnemyUfo) {
+                    enemyArray.push( ent );
+                    xmin = min( xmin, ent.bbox.tl.x );
+                    xmax = max( xmax, ent.bbox.br.x );
+                }
+            }
+            
+            if (enemyArray.length > 0) {
+                // Check if direction needs to be changed
+                if (gameStateEnemyState == gameStateEnemyStateNormal) {
+                    var directionNow = enemyArray[0].direction;
+                    
+                    if (xmin < gameConstEnemyLimitLeft  && directionNow == -1
+                    ||  xmax > gameConstEnemyLimitRight && directionNow == +1) {
+                        // Switch direction and enter descend mode
+                        gameStateEnemyState     = gameStateEnemyStateDescend;
+                        gameStateEnemyStateMeta = 0;
+                    
+                        for (var i=0; i<enemyArray.length; i++) {
+                            var ent = enemyArray[i];
+                            ent.direction = -ent.direction;
+                        }
+                    }
+                }
+                else if (gameStateEnemyState == gameStateEnemyStateDescend) {
+                    // Descend and switch back to normal mode
+                    gameStateEnemyStateMeta += gameStateEnemySpeed;
+                    
+                    if (gameStateEnemyStateMeta >= gameConstEnemyDescendDist) {
+                        gameStateEnemyState     = gameStateEnemyStateNormal;
+                        gameStateEnemyStateMeta = 0;
+                    }
+                }
+            }
+            
+            
+            
+            // Remake new wave when the old one is done with.
+            if (gameStateEnemyCount == 0) {
+                gameSetLogicStateWait( gameStateLogic, 30 );
+                gameStateEnemyWave++;
+                enemyWaveCreate();
+            }
+            
+            
+            
+            // Create UFO every once in a while
+            if (gameStateEnemyUfoEnt == undefined)
+                gameStateEnemyUfoTimer++;
+            
+            if (gameStateEnemyCount > 8) // No UFO during last 8 enemies
+            if (gameStateEnemyUfoTimer >= gameConstEnemyUfoMinTime)
+            if (gameStateEnemyUfoEnt == undefined)
+            if (randChance(600)) { // Every 10 seconds on average
+                var left  = 0;
+                var right = vw - imageEnemyUfo[0].width;
+                var xpos  = (randChance(2))  ?  left  :  right;
+                var pos   = new vec2( xpos, gameConstEnemyOffset.y - gameConstEnemySpacing.y );
+                
+                var ent = enemyUfoEntityCreate( pos );
+                    ent.direction = (xpos == left) ? +1 : -1;
+                
+                // State
+                gameStateEnemyUfoEnt = ent;
+            }
+        }
+        
+        
+        
+        // Create a full wave of enemies.
+        function enemyWaveCreate() {
+            gameStateEnemyState        = gameStateEnemyStateNormal;
+            gameStateEnemyStateMeta    = 0;
+            gameStateEnemyCount        = 0;
+            gameStateEnemySpeed        = gameConstEnemySpeedMin;
+        
+            var sequencePool = randUniqueIntArray( 0, 60 );
+            var yOffset      = gameStateEnemyWave * gameConstEnemySpacing.y;
+            
+            for (var i=0; i<gameConstEnemyWaveSize; i++) {
+                var xIndex = Math.floor( i % gameConstEnemyRowSize );
+                var yIndex = Math.floor( i / gameConstEnemyRowSize );
+                var xpos   = gameConstEnemyOffset.x + (xIndex * gameConstEnemySpacing.x);
+                var ypos   = gameConstEnemyOffset.y + (yIndex * gameConstEnemySpacing.y) + yOffset;
+                var pos    = new vec2( xpos, ypos );
+                
+                var subtype;
+                if      (yIndex == 0) { subtype = subtypeEnemyJelly; }
+                else if (yIndex <= 2) { subtype = subtypeEnemyCrab;  }
+                else                  { subtype = subtypeEnemyOcto;  }
+                
+                var ent = enemyEntityCreate( subtype, pos );
+                    ent.sequence   = sequencePool.pop();
+                    ent.imageIndex = (xIndex > 4) ? 0 : 1;
+                    
+                    entitySetImageAuto( ent );
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Enemy shot logic
+        // ===========================
+        
+        function enemyShotEntityCreate( subtype, pos ) {
+            var ent = entityCreate();
+                ent.name     = "EnemyShot";
+                ent.type     = typeEnemyShot;
+                ent.subtype  = subtype;
+                ent.pos.x    = pos.x;
+                ent.pos.y    = pos.y;
+                ent.size.x   = 8;
+                ent.size.y   = 20;
+                ent.centre.x = 4;
+                ent.centre.y = 12;
+                
+                ent.evDestroy = enemyShotEvDestroy;
+                ent.evCollide = enemyShotEvCollide;
+                ent.evStep    = enemyShotEvStep;
+                
+                entityGenAabb ( ent );
+                entitySetImage( ent, (subtype == subtypeEnemyShotNormal)  ?  imageEnemyShotNormal  :  imageEnemyShotPenetrator );
+                
+                // Game state
+                gameStateEnemyShotCount++;
+                
+            return ent;
+        }
+        
+        
+        
+        function enemyShotEvDestroy( ent ) {
+            gameStateEnemyShotCount--;
+        }
+        
+        
+        
+        function enemyShotEvCollide( ent, other ) {
+            if (other.type == typeGround
+            ||  other.type == typeFortress
+            ||  other.type == typePlayer
+            ||  other.type == typePlayerShot) {
+                var pos = aabbOverlapCentre( ent.bbox, other.bbox );
+                fxEnemyShotHitEntityCreate( pos );
+                entityDestroy( ent );
+            }
+        }
+        
+        
+        
+        function enemyShotEvStep( ent ) {
+            ent.pos.y += gameConstEnemyShotSpeed;
+            
+            if (ent.bbox.br.y >= vh)
+                entityDestroy( ent );
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Enemy shot hit effect logic
+        // ===========================
+        
+        function fxEnemyShotHitEntityCreate( pos ) {
+            var ent = entityCreate();
+                ent.type          = typeFx;
+                ent.name          = "EnemyShotHit";
+                ent.pos.x         = pos.x;
+                ent.pos.y         = pos.y;
+                ent.lifetime      = 6;
+                ent.collideEnable = false;
+                ent.imageArray    = imageFxEnemyShotHit;
+                ent.imageIndex    = 0;
+                
+                ent.evStep = fxEnemyShotHitEvStep;
+                
+                entityGenAabb( ent );
+                entitySetImageAuto( ent );
+                entitySetCentreFromImage( ent );
+                
+                ent.centre.x += randRel( 4 );
+                ent.centre.y += randRel( 4 );
+                
+            return ent;
+        }
+        
+        
+        
+        function fxEnemyShotHitEvStep( ent ) {
+            if (ent.step == 2) {
+                ent.imageIndex++;
+                entitySetImageAuto( ent );
+            }
+            else if (ent.step >= 2) {
+                ent.pos.y -= 4;
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // UFO logic
+        // ===========================
+        
+        function enemyUfoEntityCreate( pos ) {
+            var ent = entityCreate();
+                ent.type     = typeEnemy;
+                ent.subtype  = subtypeEnemyUfo;
+                ent.score    = snapHigh( randRange(50,300), 50 );
+                ent.pos.x    = pos.x;
+                ent.pos.y    = pos.y;
+                ent.size.x   = 36;
+                ent.size.y   = 18;
+                ent.centre.x = 6; // Hack hack hack
+                ent.centre.y = 0;
+                
+                ent.evDestroy = enemyUfoEvDestroy;
+                ent.evCollide = enemyUfoEvCollide;
+                ent.evStep    = enemyUfoEvStep;
+                                
+                ent.imageArray = imageEnemyUfo;
+                ent.imageIndex = 0;
+                ent.direction  = undefined;
+            
+                entityGenAabb( ent );
+                entitySetImageAuto( ent );
+                
+                // State
+                gameStateEnemyUfoEnt = ent;
+            
+            return ent;
+        }
+        
+        
+        
+        function enemyUfoEvDestroy( ent ) {
+            // State
+            gameStateEnemyUfoEnt   = undefined;
+            gameStateEnemyUfoTimer = 0;
+            
+        
+            if (ent.died) {
+                // Score
+                gameScore( ent.score );
+                
+                // Blow up big, it's worth a lot of points.
+                var xpos = ent.pos.x + (ent.size.x) / 2 + randRel( 2 );
+                var ypos = ent.pos.y + (ent.size.y) / 2 + randRel( 2 );
+                var pos  = new vec2( xpos,ypos )
+                
+                var size = 64;
+                var ex = fxExplosionEntityCreate( pos );
+                    ex.image.width     += size;
+                    ex.image.height    += size;
+                    ex.centre.x        += size / 2;
+                    ex.centre.y        += size / 2;
+                    ex.lifetime         = 16;
+                    ex.visibilityDelay  = 8;
+                
+                size = 96;
+                    ex = fxExplosionEntityCreate( pos );
+                    ex.image.width     += size;
+                    ex.image.height    += size;
+                    ex.centre.x        += size / 2;
+                    ex.centre.y        += size / 2;
+                    ex.lifetime         = 8;
+                    ex.visibilityDelay  = 4;
+            }
+        }
+        
+        
+        
+        function enemyUfoEvCollide( ent, other ) {
+            if (other.type == typePlayerShot) {
+                ent.died = true;
+                entityDestroy( ent );
+            }
+        }
+        
+        
+        
+        function enemyUfoEvStep( ent ) {
+            if (ent.bbox.tl.x <= 0  && ent.direction == -1
+            ||  ent.bbox.br.x >= vw && ent.direction == +1) {
+                entityDestroy( ent );
+            } else {
+                ent.pos.x += gameConstEnemyUfoSpeed * ent.direction;
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Fortress logic 
+        // ===========================
+        
+        function fortressBlockEntityCreate( subtype, pos ) {
+            if (subtype == -1)
+                return undefined;
+            
+            // Create
+            var ent = entityCreate();
+                ent.name          = "FortressBlock";
+                ent.type          = typeFortress;
+                ent.subtype       = subtype;
+                ent.pos           = pos;
+                ent.size          = new vec2(8,8);
+                ent.hp            = 4;
+                ent.collideStatic = true;
+                ent.imageArray    = undefined;
+                ent.imageIndex    = 0;
+                ent.nearArray     = new Array();
+                ent.evCollide     = fortressBlockEvCollide;
+            
+                // Set appropriate image set.  Apart from that all the subtypes are identical.
+                switch (ent.subtype) {
+                    case subtypeFortressN:    ent.imageArray = imageFortressBlockN;    break;
+                    case subtypeFortressTl:   ent.imageArray = imageFortressBlockTl;   break;
+                    case subtypeFortressTr:   ent.imageArray = imageFortressBlockTr;   break;
+                    case subtypeFortressBl:   ent.imageArray = imageFortressBlockBl;   break;
+                    case subtypeFortressBr:   ent.imageArray = imageFortressBlockBr;   break;
+                }
+                
+                entityGenAabb ( ent );
+                entitySetImageAuto( ent );
+            
+            return ent;
+        }
+        
+        
+        
+        // Create outline
+        function fortressOutlineEntityCreate( fortressPos ) {
+            var ent = entityCreate();
+                ent.name          = "FortressOutline";
+                ent.type          = typeFx;
+                ent.pos.x         = fortressPos.x - 2;
+                ent.pos.y         = fortressPos.y - 2;
+                ent.collideEnable = false;
+                
+                entitySetImage( ent, imageFortressOutline );
+            
+            return ent;
+        }
+        
+        
+        
+        function fortressEntityCreateComposite( atPos ) {
+            var entArray = new Array();
+            
+            var e  = -1;                // <empty>
+            var n  = subtypeFortressN;  //  []
+            var tl = subtypeFortressTl; //  /.
+            var tr = subtypeFortressTr; //  .\
+            var bl = subtypeFortressBl; //  \'
+            var br = subtypeFortressBr; //  '/
+            
+            var pattern = [ [ e,  tl, n,  n,  n,  n,  tr, e  ],
+                            [ tl, n,  n,  n,  n,  n,  n,  tr ],
+                            [ n,  n,  n,  n,  n,  n,  n,  n  ],
+                            [ n,  n,  n,  n,  n,  n,  n,  n  ],
+                            [ n,  n,  br, e,  e,  bl, n,  n  ],
+                            [ bl, n,  e,  e,  e,  e,  n,  br ] ];
+            
+            // Create blocks
+            for (var x=0; x<8; x++)
+            for (var y=0; y<6; y++) {
+                var cPosX = atPos.x + (x * 8);
+                var cPosY = atPos.y + (y * 8);
+                var ent   = fortressBlockEntityCreate( pattern[y][x], new vec2(cPosX,cPosY) );
+                
+                if (ent != undefined)
+                    entArray.push( ent );
+            }
+            
+            // Find nearest neighbours for each block.
+            for (var i=0; i<entArray.length; i++) {
+                var ent     = entArray[i];
+                var bbox    = new aabb();
+                    bbox.tl = new vec2( ent.bbox.tl.x - 4, ent.bbox.tl.y - 4 );
+                    bbox.br = new vec2( ent.bbox.br.x + 4, ent.bbox.br.y + 4 );
+            
+                ent.nearArray = entityGetEntitiesWithinAabb( entArray, bbox );
+                ent.nearArray.splice( linearSearch(ent.nearArray,ent), 1 ); // Can't be near /yourself/.
+            }
+            
+            // Create outline
+            fortressOutlineEntityCreate( atPos );
+        }
+        
+        
+        
+        // Create Space Invaders' iconic quad-fortress line.
+        function fortressEntityCreateAll( ) {
+            var offs = gameConstFortressOffset;
+            var spc  = gameConstFortressSpacing;
+            
+            for (var i=0; i<4; i++)
+                fortressEntityCreateComposite( new vec2(offs.x + i*spc, offs.y) );
+        }
+        
+        
+        
+        function fortressBlockEvCollide( ent, other ) {
+            if (other.type == typePlayerShot 
+            ||  other.type == typeEnemy
+            ||  other.type == typeEnemyShot) {
+                fortressBlockDamage( ent, 2 );
+                
+                for (var i=0; i<ent.nearArray.length; i++) {
+                    var nEnt = ent.nearArray[i];
+                    fortressBlockDamage( nEnt, 1 );
+                }
+            }
+        }
+        
+        
+        
+        function fortressBlockDamage( ent, amount ) {      
+            ent.hp         -= amount;
+            ent.imageIndex  = Math.floor( min( ent.imageIndex + amount, ent.imageArray.length-1 ) );
+            
+            entitySetImageAuto( ent );
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ===========================
+        // Ground logic
+        // ===========================
+        
+        function groundEntityCreate( pos ) {
+            var ent = entityCreate();
+                ent.name          = "Ground";
+                ent.type          = typeGround;
+                ent.pos           = pos;
+                ent.size          = new vec2(32,16);
+                ent.collideStatic = true;
+                ent.imageArray    = imageGround;
+                ent.imageIndex    = 0;
+                
+                ent.evCollide = groundEvCollide;
+                
+            entityGenAabb( ent );
+            entitySetImageAuto( ent );
+            
+            return ent;
+        }
+        
+        
+        
+        // Create outline
+        function groundOutlineEntityCreate( groundPos ) {
+            var ent = entityCreate();
+                ent.name          = "GroundOutline";
+                ent.type          = typeFx;
+                ent.pos.x         = groundPos.x;
+                ent.pos.y         = groundPos.y - 2;
+                ent.collideEnable = false;
+                
+                entitySetImage( ent, imageGroundOutline );
+            
+            return ent;
+        }
+        
+        
+        
+        function groundEntityCreateAll( ) {
+            var offs = gameConstGroundOffset;
+            var spc  = gameConstGroundSpacing;
+            
+            for (var i=0; i<vw/spc; i++)
+                groundEntityCreate( new vec2(offs.x + i*spc, offs.y) );
+            
+            groundOutlineEntityCreate( offs );
+        }
+        
+        
+        
+        function groundEvCollide( ent, other ) {
+            if (other.type == typePlayerShot 
+            ||  other.type == typeEnemyShot) {
+                // The ground can't actually be destroyed.  It just gets progressively more ruined.
+                ent.imageIndex = min( ent.imageIndex+1, ent.imageArray.length-1 );
+                entitySetImageAuto( ent );
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ====================================================================
+        // Input logic
+        // ====================================================================
+        
+        // Once again IE throws its broken-ass wrench into the gears.
+        // event.which is set in Safari, Firefox, Chrome etc.
+        // No such luck in IE.
+        function controlEvInterpretScancode( event ) {
+            return (event.which)  ?  event.which  :  event.keyCode;
+        }
+        
+        
+        
+        // Update instantaneous control state.
+        function controlEvHandlerPress( event ) {
+            var scancode = controlEvInterpretScancode( event );
+            keyStateEv[scancode] = true;
+        }
+        
+        
+        
+        // Update instantaneous control state.
+        function controlEvHandlerRelease( event ) {
+            var scancode = controlEvInterpretScancode( event );
+            keyStateEv[scancode] = false;
+        }
+        
+        
+        
+        // Check if a key is currently held down.
+        function keyDown( scancode ) {
+            return keyState[scancode];
+        }
+        
+        
+        
+        // Check if a key was pressed this frame.
+        function keyPressed( scancode ) {
+            return (keyState[scancode] && keyStateDelta[scancode]);
+        }
+        
+        
+        
+        // Check if a key was released this frame.
+        function keyReleased( scancode ) {
+            return (!keyState[scancode] && keyStateDelta[scancode]);
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ====================================================================
+        // Game logic
+        // ====================================================================
+        
+        // Before starting new game
+        function gamePre() {
+            entityDestroyAll();
+            entitySetVisibleOnCreate( false );
+            
+            gameStateDoStepEvents     = false;
+            gameStatePlayerLives      = gameConstPlayerLives;
+            gameStatePlayerShotCount  = 0;
+            gameStatePlayerRespawnCtr = 0;
+            gameStateEnemyState       = gameStateEnemyStateNormal;
+            gameStateEnemyStateMeta   = 0;
+            gameStateEnemyWave        = 0;
+            gameStateEnemyCount       = 0;
+            gameStateEnemySpeed       = gameConstEnemySpeedMin;
+            gameStateEnemyShotCount   = 0;
+            gameStateEnemyUfoEnt      = undefined;
+            gameStateEnemyUfoTimer    = 0;
+            
+            playerEntityCreate(); 
+            fortressEntityCreateAll();
+            groundEntityCreateAll();
+            enemyWaveCreate();
+        }
+        
+        
+        
+        // New game
+        function gameNew() {
+            entitySetVisibleAll( true );
+            entitySetVisibleOnCreate( true );
+            
+            gameStateDoStepEvents = true;
+            gameStatePaused       = false;
+            gameStateScore        = 0;
+            
+            gameStateCredits--;
+            
+            gameUpdateUi();
+        }
+        
+        
+        
+        // Game over
+        function gameOver() {
+            gameStateDoStepEvents = false;
+            gameSetLogicStateWait( gameStateLogicGameOver, 45 );
+        }
+        
+        
+        
+        // Increment score and perform associated tasks.
+        function gameScore( amount ) {
+            var last            = gameStateScore;
+            gameStateScore     += amount;
+            gameStateScoreHigh  = max( gameStateScoreHigh, gameStateScore );
+            
+            if (last != 0)
+                for (var i=last; i<=gameStateScore; i++)
+                    if (i % gameConstExtraLifeThresh == 0)
+                        gameStatePlayerLives++;
+            
+            gameUpdateUi();
+        }
+        
+        
+        
+        // Set logic state.
+        // Takes effect one frame after.
+        function gameSetLogicState( state ) {
+            gameStateLogic     = state;
+            gameStateLogicMeta = 0;
+        }
+        
+        
+        
+        // Wait between logic state updates.
+        function gameSetLogicStateWait( stateNext, time ) {
+            gameStateLogic         = gameStateLogicWait;
+            gameStateLogicNext     = stateNext;
+            gameStateLogicMeta     = 0;
+            gameStateLogicWaitTime = time;
+        }
+        
+        
+        
+        // Perform game logic update depending on current game state.
+        // Runs every step.
+        function gameLogic() {
+            switch (gameStateLogic) {
+                case gameStateLogicWait:
+                    if (gameStateLogicMeta++ > gameStateLogicWaitTime)
+                        gameSetLogicState( gameStateLogicNext );
+                break;
+                
+                
+                
+                case gameStateLogicTitle:
+                    // Not implemented
+                    gameSetLogicState( gameStateLogicInsertCoin );
+                break;
+                
+                
+                
+                case gameStateLogicInsertCoin:
+                    // Not implemented
+                    gameSetLogicState( gameStateLogicPressStart );
+                break;
+                
+                
+                
+                case gameStateLogicPressStart:
+                    gamePromptType( "Press start to play", gameStateLogicMeta, true );
+                    
+                    document.getElementById("title").style.visibility = "visible";
+                    
+                    // Input
+                    if (ctrlStart) {
+                        document.getElementById("title").style.visibility = "hidden";
+                        gamePromptClear();
+                        gameSetLogicState( gameStateLogicPreGame );
+                        gamePre();
+                    }
+                    
+                    gameStateLogicMeta++;
+                break;
+                
+                
+                
+                case gameStateLogicPreGame:
+                    // Make all entities visible in sequence, like the original game.
+                    if (gameStateLogicMeta < coreEntityArray.length) {
+                        for (var i=gameStateLogicMeta; i<gameStateLogicMeta+4; i+=1) {
+                            if (i < coreEntityArray.length) {
+                                var ent = coreEntityArray[i];
+                                entitySetVisible( ent, true );
+                            }
+                        }
+                    } else {
+                        gameSetLogicStateWait( gameStateLogicInGame, 15 );
+                        gameNew();
+                    }
+                    
+                    gameStateLogicMeta += 4;
+                break;
+                
+                
+                
+                case gameStateLogicInGame:
+                    gameStepEntity();
+                    playerLogic();
+                    enemyLogic();
+                break;
+                
+                
+                
+                case gameStateLogicGameOver:
+                    // Destroy entities, then restart.
+                    if (coreEntityArray.length > 0) {
+                        for (var i=0; i<4 && i<coreEntityArray.length; i++)
+                            entityDestroy( coreEntityArray[i] );
+                    } else {
+                        gamePromptType( "Game over", gameStateLogicMeta, false );
+                        gameStateLogicMeta++;
+                    }
+                    
+                    // Exit after five seconds or when start/fire button pressed
+                    if (gameStateLogicMeta > 300 || ctrlStart || ctrlFire) {
+                        gamePromptClear();
+                        gameSetLogicState( gameStateLogicInsertCoin );
+                    }
+                break;
+                
+                
+                
+                default: // Error
+                    assert( false, "Invalid core/game logic state: " + gameStateLogic );
+                
+                break;
+            }
+        }
+        
+        
+        
+        // Write to the prompt div using a fancy typer effect.
+        function gamePromptType( text, sync, blink ) {
+            var elem          = document.getElementById("prompt");
+            var typeInterval  = 2;
+            var blinkInterval = 120;
+            var blinkTime     = 20;
+            
+            if (sync < blinkTime) { // Start
+                elem.innerHTML        = "";
+                elem.style.visibility = "visible";
+            } else {
+                if (blink // Blink
+                &&  sync % blinkInterval < blinkTime
+                &&  sync > blinkInterval) {
+                    elem.style.visibility = "hidden";
+                } 
+                else
+                if (sync % typeInterval == 0) { // Type
+                    elem.innerHTML        = "";
+                    elem.style.visibility = "visible";
+                    
+                    var frac = (sync - blinkTime) / typeInterval;
+                    
+                    for (var i=0; i<min(text.length,frac); i++) {
+                        var c = text.charAt( i );
+                        elem.innerHTML += (i == Math.floor(frac)-1)  ?  c.toUpperCase()  :  c;
+                    }
+                }
+            }
+        }
+        
+        
+        
+        function gamePromptClear() {
+            var elem  = document.getElementById("prompt");
+                elem.innerHTML        = "";
+                elem.style.visibility = "hidden";
+        }
+        
+        
+                
+        
+        
+        // ====================================================================
+        // Core logic
+        // ====================================================================
+        
+        function gameMainLoop() {
+            gameCtrl();
+            gameCtrlMeta();
+            
+            if (!gameStatePaused) {
+                gameEntityCreate();
+                
+                if (gameStateLogic == gameStateLogicInGame) {
+                    gameGenAabb();
+                    gameGenSpatialHash();
+                    gameCollide();
+                }
+                
+                gameStep();
+                gameEntityDestroy();
+            }
+            
+            gameDraw();
+        }
+        
+        
+        
+        // Initialise core logic state.
+        function gameInit() {
+            // Init keyboard states.
+            for (var i=0; i<keyState.length; i++) {
+                keyState[i]      = false;
+                keyStateDelta[i] = false;
+                keyStateEv[i]    = false;
+            }
+            
+            // Init collision system.
+            gameInitSpatialHash();
+        }
+        
+        
+        
+        // Update game control states.
+        function gameCtrl() {
+            for (var i=0; i<keyState.length; i++) {
+                keyStateDelta[i] = (keyState[i] != keyStateEv[i]);
+                keyState[i]      = keyStateEv[i];
+            }
+            
+            ctrlMoveLeft  = keyDown( bindMoveLeft  );
+            ctrlMoveRight = keyDown( bindMoveRight );
+            ctrlAxisX     = ctrlMoveRight - ctrlMoveLeft;
+            ctrlFire      = keyPressed( bindFire  );
+            ctrlPause     = keyPressed( bindPause );
+            ctrlCoin      = keyPressed( bindCoin );
+            ctrlStart     = keyPressed( bindStart );
+        }
+        
+        
+        
+        // Handle controls that control the game itself.
+        function gameCtrlMeta() {
+            // Pause/unpause
+            if (ctrlPause)
+            if (gameStateLogic == gameStateLogicInGame) {
+                gameStatePaused = (!gameStatePaused);
+                gameUpdateUi();
+            }
+            
+            // Coin
+            if (ctrlCoin) {
+                gameStateCredits++;
+                gameUpdateUi();
+            }
+            
+            // Start game
+            if (ctrlStart)
+                gameUpdateUi();
+        }
+        
+        
+        
+        // Generate axis-aligned bounding boxes for all entities which have
+        // collisions enabled and which are not static.
+        function gameGenAabb() {
+            for (var i=0; i<coreEntityArray.length; i++) {
+                var ent = coreEntityArray[i];
+                
+                if (   ent.collideEnable)
+                if ( ! ent.collideStatic)
+                    entitySetAabbAuto( ent );
+            }
+        }
+        
+        
+        
+        // Initialise spatial hash for collisions.
+        // Creating objects is computionally expensive.
+        function gameInitSpatialHash() {
+            var rowsize = Math.ceil( vw / spatialHashGranularity );
+            var colsize = Math.ceil( vh / spatialHashGranularity );
+            
+            var buffer  = rowsize; // Extra row for safety buffer
+            var buckets = buffer + rowsize * colsize;
+                                            
+            for (var i=0; i<buckets; i++)
+                spatialHashArray.push( new Array() );
+        }
+        
+        
+        
+        // Add entity to spatial hash array.
+        function spatialHashAddEntity( ent ) {
+            var g   = spatialHashGranularity;
+            var shi = ent.spatialHashIndeces;
+                shi.length = 0;
+            
+            // Fill region (entities larger than the granularity occupy multiple buckets)
+            // Function calls are inlined here for performance reasons.
+            var xb = Math.floor( ent.bbox.tl.x / g ) * g; // Inline snapLow
+            var yb = Math.floor( ent.bbox.tl.y / g ) * g; //
+            var xe = Math.ceil ( ent.bbox.br.x / g ) * g; // Inline snapHigh
+            var ye = Math.ceil ( ent.bbox.br.y / g ) * g; // 
+            
+            var rowsize = Math.ceil( vw / g );
+            
+            for (var x=xb; x<xe; x+=g)
+            for (var y=yb; y<ye; y+=g) {
+                var index = (x / g) + ((y / g) * rowsize); // Index in spatial hash array
+                shi.push( index );
+            }
+            
+            for (var i=0; i<shi.length; i++)
+                spatialHashArray[ shi[i] ].push( ent ); 
+        }
+        
+        
+        
+        // Generate spatially partitioned collision structure, an array of
+        // arrays of references to entities sorted into buckets for fast
+        // collision detection.
+        // How it works:
+        // The game area is treated as a numbered grid.  Each cell is an
+        // array listing all entities lying within its bounds.  Since it's
+        // impossible for an entity to collide with something outside the
+        // cells it overlaps, there's no need to check those.
+        // This increases performance of the collision system by around
+        // 150 times compared with the simple way of checking everything.
+        function gameGenSpatialHash() {
+            // Reset
+            for (var i=0; i<spatialHashArray.length; i++)
+                spatialHashArray[i].length = 0; // Yes, this really works properly.  Javascript is crazy.
+            
+            // Regenerate
+            for (var i=0; i<coreEntityArray.length; i++) {
+                var ent = coreEntityArray[i];
+                
+                if (ent.collideEnable) // Skip entities which have collision detection disabled.
+                    spatialHashAddEntity( ent );
+            }
+        }
+        
+        
+        
+        // Test and handle all collisions occuring in the current frame.
+        // Collisions are done in synchronous pairs, so that even if one
+        // entity is destroyed both events will be generated.
+        function gameCollide() {
+            collisionCtr = 0; // For debugging performance.
+            
+            // Create hash of entity UID pairs to cull collision events that have already happened.
+            var entHashPairs = {}; // Equivalent to "new Object()".  All objects are associative arrays in Javascript.
+            
+            for (var i=0; i<coreEntityArray.length; i++) {
+                var entRef = coreEntityArray[i]; // Reference entity
+                
+                if ( ! entRef.collideEnable)
+                    continue; // No collisions for you
+                
+                for (var ix=0; ix<entRef.spatialHashIndeces.length; ix++) {
+                    // Get all entities within the bucket
+                    var spatialHashSubset = entRef.spatialHashIndeces[ix];
+                    
+                    if (spatialHashArray[spatialHashSubset].length > 1) // If it's not just you in that bucket...
+                    for (var z=0; z<spatialHashArray[spatialHashSubset].length; z++) {
+                        collisionCtr++;
+                        var entCom = spatialHashArray[spatialHashSubset][z]; // Comparison entity
+                        
+                        if (entRef        != entCom       )            // Don't collide with self.
+                        if (entRef.exists && entCom.exists)            // Don't collide with things that don't exist.
+                        if (entRef.type   != entCom.type  )            // Don't collide with things of the same type.
+                        if (aabbCollide( entRef.bbox, entCom.bbox )) { // Finally, if entity is actually colliding with another...
+                            // Create hash strings for entity pair
+                            var rHash = "h" + entRef.uid + entCom.uid;
+                            var cHash = "h" + entCom.uid + entRef.uid;
+                            
+                            // Test whether a collision has already been generated for this pair.
+                            if (entHashPairs[rHash]  ||  entHashPairs[cHash]) {
+                                // Skip colliding this entity pair.
+                                continue; // Jump to next loop iteration.
+                            } else {
+                                // Call collision events.
+                                if (entRef.evCollide != undefined) { entRef.evCollide( entRef, entCom ); }
+                                if (entCom.evCollide != undefined) { entCom.evCollide( entCom, entRef ); }
+                                
+                                // Add the unique collision pair.
+                                entHashPairs[cHash] = true;
+                                entHashPairs[rHash] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        
+        
+        // Do stuff that needs to be done every frame.
+        function gameStep() {
+            gameLogic();
+            gameStateStep++;
+        }
+        
+        
+        
+        // Update entities and call step events.
+        function gameStepEntity() {
+            if (gameStateDoStepEvents) {
+                for (var i=0; i<coreEntityArray.length; i++) {
+                    var ent = coreEntityArray[i];
+                    
+                    if (ent.exists) { // Ignore entities which are already done with.
+                        // Exec step events.
+                        if (ent.evStep != undefined)
+                            ent.evStep( ent );
+                        
+                        // Destroy entities which have no hitpoints left.
+                        if (ent.hp <= 0) {
+                            ent.died = true;
+                            entityDestroy( ent );
+                        }
+                        
+                        // Destroy entities whose lifetime has expired.
+                        if (ent.lifetime != -1)
+                        if (ent.lifetime < ent.step)
+                            entityDestroy( ent );
+                        
+                        // Increment entity's step counter.
+                        ent.step++;
+                    }
+                }
+            }
+        }
+        
+        
+        
+        // Add created entities to coreEntityArray and add their XHTML elements to the game div.
+        function gameEntityCreate() {
+            while (coreEntityStackCreate.length > 0) {
+                var ent = coreEntityStackCreate.pop();
+                
+                ent.coreIndex = coreEntityArray.length;
+                coreEntityArray.push( ent );
+                
+                document.getElementById("game").appendChild( ent.image );
+            }
+        }
+        
+        
+        
+        // Remove destroyed game entities and their associated XHTML elements.
+        function gameEntityDestroy() {
+            // Parent of all game elements.
+            var gameElem = document.getElementById("game");
+        
+            // Destroy objects pointed to by core array.
+            while (coreEntityStackDestroy.length > 0) {
+                var index = coreEntityStackDestroy.pop();
+                gameElem.removeChild( coreEntityArray[index].elem );
+                delete coreEntityArray[index];
+            }
+            
+            // Remove array elements from core array.
+            for (var i=coreEntityArray.length-1; i>=0; i--) // Loop backwards to prevent skipping elements.
+                if (coreEntityArray[i] == undefined) // If previously deleted...
+                    coreEntityArray.splice( i, 1 );
+            
+            // Some entity coreIndex vars will now be incorrect, so reset them all.
+            for (var i=0; i<coreEntityArray.length; i++)
+                coreEntityArray[i].coreIndex = i;
+        }
+        
+        
+        
+        // Update XHTML for score, lives and credits.
+        function gameUpdateUi() {
+            document.getElementById( "scoreVal" )    .innerHTML  = gameStateScore;
+            document.getElementById( "scoreHighVal" ).innerHTML  = gameStateScoreHigh;
+            document.getElementById( "livesVal" )    .innerHTML  = " x " + gameStatePlayerLives;
+            document.getElementById( "paused" ).style.visibility = (gameStatePaused)  ?  "visible"  :  "hidden";
+        }
+        
+        
+        
+        // Update game graphics.
+        function gameDraw() {
+            for (var i=0; i<coreEntityArray.length; i++) {
+                var ent = coreEntityArray[i];
+                
+                if (undefined != ent.elem) {
+                    ent.elem.style.left = (ent.pos.x - ent.centre.x) + "px";
+                    ent.elem.style.top  = (ent.pos.y - ent.centre.y) + "px";
+                }
+            }
+            
+            
+            // Debug basic info
+            if (debug) {
+                document.getElementById("debugOut").innerHTML = 
+                      "Frame:    " + ++frameCtr + ((gameStatePaused) ? " (paused)":"") + "<br/>"
+                    + "Entities: " + coreEntityArray.length  + "<br/>"
+                    + "Colctr:   " + collisionCtr            + "<br/>"
+                    + "SHG:      " + spatialHashGranularity  + "<br/>"
+                    + "SHBs:     " + spatialHashArray.length + "<br/><br/>"
+                    
+                    
+                    + "gsStep:   " + gameStateStep          + "<br/>"
+                    + "gslState: " + gameStateLogic         + "<br/>"
+                    + "gslMeta:  " + gameStateLogicMeta     + "<br/>"
+                    + "gslWaitT: " + gameStateLogicWaitTime + "<br/>"
+                    + "gslNext:  " + gameStateLogicNext     + "<br/><br/>"
+                    
+                    + "Enemies:  " + gameStateEnemyCount  + "<br/>"
+                    + "Credits:  " + gameStateCredits     + "<br/>"
+                    + "Score:    " + gameStateScore       + "<br/>"
+                    + "Highsc:   " + gameStateScoreHigh   + "<br/>"
+                    + "Lives:    " + gameStatePlayerLives + "<br/><br/>"
+                ;
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ====================================================================
+        // Debug
+        // ====================================================================
+        
+        // Show bounding boxes for all entities.
+        // Only use when game is paused.
+        function debugDrawAabb() {
+            for (var i=0; i<coreEntityArray.length; i++) {
+                var ent = coreEntityArray[i];
+                
+                if (ent.exists)
+                if (ent.collideEnable) {
+                    var elem = new Image();
+                    elem.src    = imageDebugPixel.src;
+                    elem.width  = ent.size.x;
+                    elem.height = ent.size.y;
+                    document.getElementById("game").appendChild( elem );
+                    
+                    elem.className  = "gameObj";
+                    elem.style.left = (ent.bbox.tl.x) + "px";
+                    elem.style.top  = (ent.bbox.tl.y) + "px";
+                }
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        // ====================================================================
+        // Startup
+        // ====================================================================
+        
+        // Initialise stuff needed to run the game.
+        // The gameMainLoop function is automatically called when coreInit() is called.
+        function coreInit() {
+            // Add control listeners.
+            // These call given functions with the event as a parameter.  It can be accessed to get the keyboard scancode.
+            coreAddEventListener( "keydown", controlEvHandlerPress,   false );
+            coreAddEventListener( "keyup",   controlEvHandlerRelease, false );
+            
+            // Have gameMainLoop function get executed forever by the browser at the given frequency.
+            // You can't simply call it in a while loop like in a normal program because the browser will
+            // get uppity and assume the script has crashed.
+            mainLoopIntId = setInterval( gameMainLoop, targetFrequency );
+            
+            // Starts the game.
+            gameInit();
+        }
+        
+        
+        
+        function coreAddEventListener( event, func, capture ) {
+            if (document.addEventListener) 
+                 document.addEventListener( event, func, capture ); // Safari, Firefox, Chrome etc.
+            else document.attachEvent( "on"+event, func );          // IE :|
+        }
+        
+    //]]> // end validator stuff
+    </script>
+</head>
+
+
+
+
+
+<body onload="coreInit()">
+
+    <noscript>
+        <p>
+            You need Javascript to play!
+        </p>
+    </noscript>
+    
+    
+    
+    <div id="gameBox">
+        
+        <div id="game">
+            <div id="infoTop">
+                <div class="ui" id="score">
+                    Score: <span id="scoreVal">0</span>
+                </div>
+                <div class="ui" id="scoreHigh">
+                    High: <span id="scoreHighVal">0</span>
+                </div>
+            </div>
+            
+            <img id="title" src="images/title.png" width="400" height="136" alt="Space Invaders"/>
+            
+            <div id="paused">
+                Paused
+            </div>
+            
+            <div id="prompt">prompt goes here</div>
+            
+            <div id="infoBottom">
+                <div class="ui" id="lives">
+                    <img src="images/uiLife.png" width="22" height="16" alt="lives"/>
+                    <span id="livesVal"> x 5</span>
+                </div>
+                <div class="ui" id="credits"></div>
+            </div>
+        </div>
+        
+        <div id="controls">
+            <div id="controlsLeft">
+                &nbsp;<strong>Move:&nbsp;</strong> Arrow keys<br/>
+                &nbsp;<strong>Shoot:</strong> Z
+            </div>
+            
+            <div id="controlsRight">
+                &nbsp;<strong>Start:</strong> S<br/>
+                &nbsp;<strong>Pause:</strong> P
+            </div>
+        </div>
+        
+        <pre id="debugOut"></pre>
+        
+    </div>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+</body>
+    
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
